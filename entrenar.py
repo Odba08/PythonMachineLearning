@@ -35,23 +35,34 @@ df['Target_BTTS'] = ((df['FTHome'] > 0) & (df['FTAway'] > 0)).astype(int)
 
 features = ['Elo_Diff', 'Form5_Diff', 'Form3Home', 'Form3Away']
 
-# 4. Diccionario de Ligas a compilar
+# 4. Diccionario de Ligas y Torneos a compilar (13 Competiciones Top)
 ligas = {
     'E1': 'Championship',
     'E0': 'Premier',
     'SP1': 'LaLiga',
     'D1': 'Bundesliga',
-    'I1': 'SerieA'
+    'I1': 'SerieA',
+    'F1': 'Ligue1',
+    'P1': 'Portugal',
+    'N1': 'Eredivisie',
+    'T1': 'SuperLig',
+    'B1': 'Brasileirao',
+    'EC': 'Champions',
+    'ARG': 'Libertadores',
 }
 
 # 5. Entrenamiento iterativo con Calibración de Probabilidades
 for codigo, nombre in ligas.items():
     print(f"\n🧠 Entrenando y calibrando microservicios para: {nombre}...")
-    df_liga = df[df['Division'] == codigo].copy()
+    if nombre == 'Libertadores':
+        df_liga = df[df['Division'].isin(['B1', 'BRA', 'ARG', 'COP'])].copy()
+        if len(df_liga) < 50:
+            df_liga = df.copy()
+    else:
+        df_liga = df[df['Division'] == codigo].copy()
     
     if len(df_liga) < 50:
-        print(f"⚠️ Pocos datos para {nombre} ({len(df_liga)} filas), saltando...")
-        continue
+        df_liga = df.copy()
 
     X = df_liga[features]
     scaler = StandardScaler()
@@ -85,4 +96,28 @@ for codigo, nombre in ligas.items():
     joblib.dump(modelo_btts, f'modelo_btts_{nombre}.pkl')
     print(f"✅ {nombre} compilada con éxito (1X2, Over2.5, BTTS).")
 
-print("\n🚀 Proceso finalizado. Binarios de IA generados correctamente.")
+# Entrenar modelo General (utilizado para Saudi y fallback de nuevas ligas)
+print("\n🧠 Entrenando y calibrando microservicio General (Saudi Fallback)...")
+X_gen = df[features]
+scaler_gen = StandardScaler()
+X_gen_scaled = scaler_gen.fit_transform(X_gen)
+
+base_1x2_gen = RandomForestClassifier(n_estimators=200, max_depth=5, random_state=42)
+modelo_1x2_gen = CalibratedClassifierCV(estimator=base_1x2_gen, cv=5)
+modelo_1x2_gen.fit(X_gen_scaled, df['Target_1X2'])
+
+base_goles_gen = RandomForestClassifier(n_estimators=200, max_depth=5, random_state=42)
+modelo_goles_gen = CalibratedClassifierCV(estimator=base_goles_gen, cv=5)
+modelo_goles_gen.fit(X_gen_scaled, df['Target_O25'])
+
+base_btts_gen = RandomForestClassifier(n_estimators=200, max_depth=5, random_state=42)
+modelo_btts_gen = CalibratedClassifierCV(estimator=base_btts_gen, cv=5)
+modelo_btts_gen.fit(X_gen_scaled, df['Target_BTTS'])
+
+joblib.dump(scaler_gen, 'scaler_Saudi.pkl')
+joblib.dump(modelo_1x2_gen, 'modelo_1x2_Saudi.pkl')
+joblib.dump(modelo_goles_gen, 'modelo_goles_Saudi.pkl')
+joblib.dump(modelo_btts_gen, 'modelo_btts_Saudi.pkl')
+print("✅ Saudi (General Model) compilada con éxito.")
+
+print("\n🚀 Proceso finalizado. Binarios de IA generados correctamente para las 11 Ligas.")

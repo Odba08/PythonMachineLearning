@@ -10,7 +10,11 @@ import pandas as pd
 app = FastAPI(title="Motor Cuantitativo Multi-Liga")
 
 # 1. Cargamos TODOS los modelos en memoria al arrancar el servidor
-ligas_soportadas = ['Championship', 'Premier', 'LaLiga', 'Bundesliga', 'SerieA']
+ligas_soportadas = [
+    'Championship', 'Premier', 'LaLiga', 'Bundesliga', 'SerieA',
+    'Ligue1', 'Portugal', 'Eredivisie', 'SuperLig', 'Brasileirao', 'Saudi',
+    'Champions', 'Libertadores'
+]
 motores = {}
 
 print("Cargando cerebros en memoria...")
