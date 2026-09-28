@@ -598,26 +598,41 @@ def predecir_combate_dinamico(f_red: str, f_blue: str, weight_class: str = 'Bant
     r_b = parse_reach_cm(m_blue.iloc[0]['REACH'], h_b) if not m_blue.empty else h_b
     a_b = parse_age(m_blue.iloc[0]['DOB']) if not m_blue.empty else 30.0
 
-    default_s = {'sig_str': 3.5, 'avg_td': 1.2, 'avg_sub': 0.5, 'win_streak': 0, 'longest_win_streak': 1, 'lose_streak': 0, 'wins': 5, 'losses': 2, 'total_rounds': 15, 'total_title_bouts': 0, 'ko_wins': 1, 'sub_wins': 1, 'dec_wins': 2}
+    default_s = {
+        'sig_str': 2.0,
+        'avg_td': 0.5,
+        'avg_sub': 0.2,
+        'win_streak': 0,
+        'longest_win_streak': 0,
+        'lose_streak': 0,
+        'wins': 0,
+        'losses': 0,
+        'total_rounds': 0,
+        'total_title_bouts': 0,
+        'ko_wins': 0,
+        'sub_wins': 0,
+        'dec_wins': 0
+    }
     s_r = fighter_career_stats.get(k_r, default_s)
     s_b = fighter_career_stats.get(k_b, default_s)
 
+    # Nota crítica: En ufc-master.csv todos los campos _dif están entrenados como Blue - Red (B - R)
     diffs = {
-        'reach_dif': r_r - r_b,
-        'height_dif': h_r - h_b,
-        'age_dif': a_r - a_b,
-        'sig_str_dif': s_r['sig_str'] - s_b['sig_str'],
-        'avg_td_dif': s_r['avg_td'] - s_b['avg_td'],
-        'avg_sub_att_dif': s_r['avg_sub'] - s_b['avg_sub'],
-        'win_streak_dif': s_r['win_streak'] - s_b['win_streak'],
-        'longest_win_streak_dif': s_r['longest_win_streak'] - s_b['longest_win_streak'],
-        'lose_streak_dif': s_r['lose_streak'] - s_b['lose_streak'],
-        'win_dif': s_r['wins'] - s_b['wins'],
-        'loss_dif': s_r['losses'] - s_b['losses'],
-        'total_round_dif': s_r['total_rounds'] - s_b['total_rounds'],
-        'total_title_bout_dif': s_r['total_title_bouts'] - s_b['total_title_bouts'],
-        'ko_dif': s_r['ko_wins'] - s_b['ko_wins'],
-        'sub_dif': s_r['sub_wins'] - s_b['sub_wins'],
+        'reach_dif': r_b - r_r,
+        'height_dif': h_b - h_r,
+        'age_dif': a_b - a_r,
+        'sig_str_dif': s_b['sig_str'] - s_r['sig_str'],
+        'avg_td_dif': s_b['avg_td'] - s_r['avg_td'],
+        'avg_sub_att_dif': s_b['avg_sub'] - s_r['avg_sub'],
+        'win_streak_dif': s_b['win_streak'] - s_r['win_streak'],
+        'longest_win_streak_dif': s_b['longest_win_streak'] - s_r['longest_win_streak'],
+        'lose_streak_dif': s_b['lose_streak'] - s_r['lose_streak'],
+        'win_dif': s_b['wins'] - s_r['wins'],
+        'loss_dif': s_b['losses'] - s_r['losses'],
+        'total_round_dif': s_b['total_rounds'] - s_r['total_rounds'],
+        'total_title_bout_dif': s_b['total_title_bouts'] - s_r['total_title_bouts'],
+        'ko_dif': s_b['ko_wins'] - s_r['ko_wins'],
+        'sub_dif': s_b['sub_wins'] - s_r['sub_wins'],
     }
 
     x_df = pd.DataFrame([[diffs[c] for c in ufc_features]], columns=ufc_features)
@@ -740,6 +755,31 @@ def analizar_peleas_the_odds(peleas: List[MatchupOddsItem]):
     resultados = []
     for p in peleas:
         prob_home, prob_away, diffs, props = predecir_combate_dinamico(p.home_team, p.away_team, p.weight_class)
+
+        # Probabilidades implícitas justas de mercado (sin vig)
+        raw_imp_h = (1.0 / p.odds_home) if p.odds_home > 1.0 else 0.5
+        raw_imp_a = (1.0 / p.odds_away) if p.odds_away > 1.0 else 0.5
+        sum_imp = raw_imp_h + raw_imp_a
+        fair_market_h = (raw_imp_h / sum_imp) * 100.0
+        fair_market_a = (raw_imp_a / sum_imp) * 100.0
+
+        # Identificar si alguno es debutante sin peleas registradas en UFC
+        k_home = norm_name(p.home_team)
+        k_away = norm_name(p.away_team)
+        debutant_h = k_home not in fighter_career_stats
+        debutant_a = k_away not in fighter_career_stats
+
+        # Calibración Bayesiana cuantitativa: anclar predicción a la eficiencia del mercado
+        if debutant_h or debutant_a:
+            # En combates con debutantes (datos limitados en UFC), anclar 70% a línea de mercado y 30% a modelo físico
+            prob_home = round(0.30 * prob_home + 0.70 * fair_market_h, 1)
+            prob_away = round(100.0 - prob_home, 1)
+        else:
+            # Si ambos tienen récord, atenuar discrepancias extremas (>18%) para evitar falsos edges por variables ocultas
+            div_h = prob_home - fair_market_h
+            if abs(div_h) > 18.0:
+                prob_home = round(fair_market_h + (div_h * 0.50), 1)
+                prob_away = round(100.0 - prob_home, 1)
 
         implied_home = round((1.0 / p.odds_home) * 100.0, 1) if p.odds_home > 1.0 else 50.0
         implied_away = round((1.0 / p.odds_away) * 100.0, 1) if p.odds_away > 1.0 else 50.0
