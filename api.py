@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from typing import List
 import joblib
 import pandas as pd
-
+import math
 import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -942,6 +942,143 @@ def analizar_us_sports(payload: USSportPayload):
             value_edge = edge_away
             value_side = 'AWAY'
 
+        # Props avanzadas para apostadores (Mercados Cuantitativos con Probabilidades)
+        props = {}
+        if sport == 'nfl':
+            spread_line = g.spread if g.spread != 0 else (-3.5 if exp_margin > 0 else 3.5)
+            total_line = g.total if g.total != 0 else round(exp_total * 2) / 2
+
+            # Probabilidad de cubrir el spread (distribución normal, desv. estándar típica NFL ~13.5)
+            z_spread = (exp_margin - spread_line) / 13.5
+            p_cover_home = round(float(0.5 * (1.0 + math.erf(z_spread / math.sqrt(2.0)))) * 100.0, 1)
+            p_cover_away = round(100.0 - p_cover_home, 1)
+
+            # Probabilidad de Over / Under Puntos Totales (desv. estándar NFL ~10.5)
+            z_total = (exp_total - total_line) / 10.5
+            p_over = round(float(0.5 * (1.0 + math.erf(z_total / math.sqrt(2.0)))) * 100.0, 1)
+            p_under = round(100.0 - p_over, 1)
+
+            # Margen de victoria: Partido cerrado (1 a 6 pts) vs Victoria sólida (7+ pts / Touchdown+)
+            abs_m = abs(exp_margin)
+            p_cerrado = round(min(45.0, max(24.0, 42.0 - abs_m * 1.6)), 1)
+            p_solido = round(100.0 - p_cerrado, 1)
+
+            if p_over >= 56.0:
+                sug = f"Over {total_line} Puntos ({p_over}%)"
+            elif p_under >= 56.0:
+                sug = f"Under {total_line} Puntos ({p_under}%)"
+            elif p_cover_home >= 56.0:
+                sug = f"{g.home_team} cubre Hándicap ({spread_line:+} pts)"
+            elif p_cover_away >= 56.0:
+                sug = f"{g.away_team} cubre Hándicap ({(-spread_line):+} pts)"
+            else:
+                sug = f"{g.home_team if prob_home >= prob_away else g.away_team} Ganador Directo"
+
+            props = {
+                'spread_line': spread_line,
+                'cover_home_prob': p_cover_home,
+                'cover_away_prob': p_cover_away,
+                'total_line': total_line,
+                'over_prob': p_over,
+                'under_prob': p_under,
+                'margen_1_6_prob': p_cerrado,
+                'margen_7_mas_prob': p_solido,
+                'jugada_clave': sug
+            }
+
+        elif sport == 'mlb':
+            total_line = g.total if g.total != 0 else round(exp_total * 2) / 2
+
+            # Runline estándar en béisbol es siempre +/- 1.5 (desv. estándar típica MLB ~3.2)
+            z_rl = (exp_margin - 1.5) / 3.2
+            p_cover_home_rl = round(float(0.5 * (1.0 + math.erf(z_rl / math.sqrt(2.0)))) * 100.0, 1)
+            p_cover_away_rl = round(100.0 - p_cover_home_rl, 1)
+
+            # Probabilidad Over / Under Carreras (desv. estándar MLB ~3.4)
+            z_total = (exp_total - total_line) / 3.4
+            p_over = round(float(0.5 * (1.0 + math.erf(z_total / math.sqrt(2.0)))) * 100.0, 1)
+            p_under = round(100.0 - p_over, 1)
+
+            # NRFI / YRFI (No Run First Inning vs Yes Run First Inning)
+            nrfi_prob = round(min(65.0, max(38.0, 53.0 + (8.5 - exp_total) * 3.6)), 1)
+            yrfi_prob = round(100.0 - nrfi_prob, 1)
+
+            # Primeras 5 Entradas (F5)
+            f5_fav = g.home_team if prob_home >= prob_away else g.away_team
+            f5_prob = round(min(72.0, max(prob_home, prob_away) * 0.94), 1)
+
+            if nrfi_prob >= 58.0:
+                sug = f"NRFI - Sin Carreras en 1er Inning ({nrfi_prob}%)"
+            elif yrfi_prob >= 58.0:
+                sug = f"YRFI - Carrera en 1er Inning ({yrfi_prob}%)"
+            elif p_cover_away_rl >= 58.0:
+                sug = f"{g.away_team} Runline (+1.5 Carreras)"
+            elif p_cover_home_rl >= 55.0:
+                sug = f"{g.home_team} Runline (-1.5 Carreras)"
+            elif p_over >= 56.0:
+                sug = f"Over {total_line} Carreras ({p_over}%)"
+            elif p_under >= 56.0:
+                sug = f"Under {total_line} Carreras ({p_under}%)"
+            else:
+                sug = f"{f5_fav} F5 (Primeras 5 Entradas)"
+
+            props = {
+                'runline_home': f"{g.home_team} -1.5",
+                'runline_away': f"{g.away_team} +1.5",
+                'runline_home_prob': p_cover_home_rl,
+                'runline_away_prob': p_cover_away_rl,
+                'total_line': total_line,
+                'over_prob': p_over,
+                'under_prob': p_under,
+                'nrfi_prob': nrfi_prob,
+                'yrfi_prob': yrfi_prob,
+                'f5_pick': f5_fav,
+                'f5_prob': f5_prob,
+                'jugada_clave': sug
+            }
+
+        elif sport == 'nba':
+            spread_line = g.spread if g.spread != 0 else (-5.5 if exp_margin > 0 else 5.5)
+            total_line = g.total if g.total != 0 else round(exp_total * 2) / 2
+
+            # Desv. estándar típica margen NBA ~11.8
+            z_spread = (exp_margin - spread_line) / 11.8
+            p_cover_home = round(float(0.5 * (1.0 + math.erf(z_spread / math.sqrt(2.0)))) * 100.0, 1)
+            p_cover_away = round(100.0 - p_cover_home, 1)
+
+            # Desv. estándar típica total NBA ~16.5
+            z_total = (exp_total - total_line) / 16.5
+            p_over = round(float(0.5 * (1.0 + math.erf(z_total / math.sqrt(2.0)))) * 100.0, 1)
+            p_under = round(100.0 - p_over, 1)
+
+            # Margen de victoria: Partido cerrado (1 a 5 pts) vs Victoria sólida (6+ pts)
+            abs_m = abs(exp_margin)
+            p_clutch = round(min(36.0, max(18.0, 31.0 - abs_m * 0.7)), 1)
+            p_decisivo = round(100.0 - p_clutch, 1)
+
+            if p_over >= 56.0:
+                sug = f"Over {total_line} Puntos ({p_over}%)"
+            elif p_under >= 56.0:
+                sug = f"Under {total_line} Puntos ({p_under}%)"
+            elif p_cover_home >= 56.0:
+                sug = f"{g.home_team} cubre Spread ({spread_line:+} pts)"
+            elif p_cover_away >= 56.0:
+                sug = f"{g.away_team} cubre Spread ({(-spread_line):+} pts)"
+            else:
+                sug = f"{g.home_team if prob_home >= prob_away else g.away_team} Ganador Directo"
+
+            props = {
+                'spread_line': spread_line,
+                'cover_home_prob': p_cover_home,
+                'cover_away_prob': p_cover_away,
+                'total_line': total_line,
+                'over_prob': p_over,
+                'under_prob': p_under,
+                'margen_1_5_prob': p_clutch,
+                'margen_6_mas_prob': p_decisivo,
+                'jugada_clave': sug
+            }
+
         analisis.append({
             'home_team': g.home_team,
             'away_team': g.away_team,
@@ -965,7 +1102,8 @@ def analizar_us_sports(payload: USSportPayload):
             'value_odds': value_odds,
             'value_prob': value_prob,
             'value_edge': value_edge,
-            'value_side': value_side
+            'value_side': value_side,
+            'props': props
         })
 
     ordenados = sorted(analisis, key=lambda x: x.get('value_edge', -999) if x.get('has_value') else -999, reverse=True)
