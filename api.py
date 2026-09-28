@@ -806,3 +806,132 @@ def endpoint_sync_greco():
         "mensaje": f"Archivos sincronizados desde GitHub Greco ({len(archivos)}) y memoria recargada.",
         "archivos": archivos
     }
+
+# ------------------------------------------------------------------
+# 6. MOTOR CUANTITATIVO DEPORTES AMERICANOS (NFL, MLB, NBA)
+# ------------------------------------------------------------------
+class USSportGame(BaseModel):
+    home_team: str
+    away_team: str
+    odds_home: float = 1.90
+    odds_away: float = 1.90
+    spread: float = 0.0
+    total: float = 0.0
+    commence_time: str = ''
+
+class USSportPayload(BaseModel):
+    sport: str  # 'nfl', 'mlb', 'nba'
+    games: List[USSportGame]
+
+us_models = {}
+for sport in ['nfl', 'mlb', 'nba']:
+    try:
+        win_m = joblib.load(os.path.join(BASE_DIR, f'modelo_{sport}_win.pkl'))
+        margin_file = f'modelo_{sport}_runline.pkl' if sport == 'mlb' else f'modelo_{sport}_margin.pkl'
+        margin_m = joblib.load(os.path.join(BASE_DIR, margin_file))
+        total_m = joblib.load(os.path.join(BASE_DIR, f'modelo_{sport}_total.pkl'))
+        with open(os.path.join(BASE_DIR, f'{sport}_elo_ratings.json'), 'r') as f:
+            elos = json.load(f)
+        us_models[sport] = {
+            'win': win_m,
+            'margin': margin_m,
+            'total': total_m,
+            'elos': elos
+        }
+        print(f'Cerebro {sport.upper()} cargado en memoria exitosamente.')
+    except Exception as e:
+        print(f'Aviso cargando cerebro {sport}: {e}')
+
+from train_us_sports import NFL_TEAMS, MLB_TEAMS, NBA_TEAMS, normalize_name
+
+@app.post('/analizar-us-sports')
+def analizar_us_sports(payload: USSportPayload):
+    sport = payload.sport.lower()
+    if sport not in us_models:
+        return {'error': f'Deporte {sport} no soportado. Disponibles: nfl, mlb, nba'}
+
+    engine = us_models[sport]
+    lookup = NFL_TEAMS if sport == 'nfl' else MLB_TEAMS if sport == 'mlb' else NBA_TEAMS
+    home_adv = 48.0 if sport == 'nfl' else 24.0 if sport == 'mlb' else 100.0
+
+    analisis = []
+    for g in payload.games:
+        h_code = normalize_name(g.home_team, lookup)
+        a_code = normalize_name(g.away_team, lookup)
+
+        h_elo = engine['elos'].get(h_code, 1500.0)
+        a_elo = engine['elos'].get(a_code, 1500.0)
+        elo_diff = (h_elo + home_adv) - a_elo
+
+        if sport == 'mlb':
+            X_input = pd.DataFrame([{'elo_diff': elo_diff, 'pyth_diff': 0.0}])
+        else:
+            X_input = pd.DataFrame([{'elo_diff': elo_diff}])
+
+        probs = engine['win'].predict_proba(X_input)[0]
+        prob_away = round(float(probs[0]) * 100.0, 1)
+        prob_home = round(float(probs[1]) * 100.0, 1)
+
+        exp_margin = round(float(engine['margin'].predict(X_input)[0]), 1)
+        exp_total = round(float(engine['total'].predict(X_input)[0]), 1)
+
+        imp_home = (1.0 / g.odds_home) * 100.0 if g.odds_home > 1.0 else 50.0
+        imp_away = (1.0 / g.odds_away) * 100.0 if g.odds_away > 1.0 else 50.0
+        edge_home = round(prob_home - imp_home, 1)
+        edge_away = round(prob_away - imp_away, 1)
+
+        has_value = False
+        value_pick = None
+        value_odds = 0.0
+        value_prob = 0.0
+        value_edge = 0.0
+        value_side = None
+
+        if edge_home >= 3.0 and edge_home >= edge_away:
+            has_value = True
+            value_pick = g.home_team
+            value_odds = g.odds_home
+            value_prob = prob_home
+            value_edge = edge_home
+            value_side = 'HOME'
+        elif edge_away >= 3.0:
+            has_value = True
+            value_pick = g.away_team
+            value_odds = g.odds_away
+            value_prob = prob_away
+            value_edge = edge_away
+            value_side = 'AWAY'
+
+        analisis.append({
+            'home_team': g.home_team,
+            'away_team': g.away_team,
+            'home_code': h_code,
+            'away_code': a_code,
+            'home_elo': h_elo,
+            'away_elo': a_elo,
+            'odds_home': g.odds_home,
+            'odds_away': g.odds_away,
+            'prob_home': prob_home,
+            'prob_away': prob_away,
+            'edge_home': edge_home,
+            'edge_away': edge_away,
+            'expected_margin': exp_margin,
+            'expected_total': exp_total,
+            'book_spread': g.spread,
+            'book_total': g.total,
+            'commence_time': g.commence_time,
+            'has_value': has_value,
+            'value_pick': value_pick,
+            'value_odds': value_odds,
+            'value_prob': value_prob,
+            'value_edge': value_edge,
+            'value_side': value_side
+        })
+
+    ordenados = sorted(analisis, key=lambda x: x.get('value_edge', -999) if x.get('has_value') else -999, reverse=True)
+    return {
+        'sport': sport,
+        'total_analizados': len(ordenados),
+        'total_con_valor': sum(1 for x in ordenados if x['has_value']),
+        'juegos': ordenados
+    }
