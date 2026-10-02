@@ -9,6 +9,7 @@ import pandas as pd
 import math
 import os
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+os.chdir(BASE_DIR)
 
 app = FastAPI(title="Motor Cuantitativo Multi-Liga")
 
@@ -24,13 +25,13 @@ print("Cargando cerebros en memoria...")
 for liga in ligas_soportadas:
     try:
         motores[liga] = {
-            'scaler': joblib.load(f'scaler_{liga}.pkl'),
-            'modelo_1x2': joblib.load(f'modelo_1x2_{liga}.pkl'),
-            'modelo_goles': joblib.load(f'modelo_goles_{liga}.pkl'),
-            'modelo_btts': joblib.load(f'modelo_btts_{liga}.pkl')
+            'scaler': joblib.load(os.path.join(BASE_DIR, f'scaler_{liga}.pkl')),
+            'modelo_1x2': joblib.load(os.path.join(BASE_DIR, f'modelo_1x2_{liga}.pkl')),
+            'modelo_goles': joblib.load(os.path.join(BASE_DIR, f'modelo_goles_{liga}.pkl')),
+            'modelo_btts': joblib.load(os.path.join(BASE_DIR, f'modelo_btts_{liga}.pkl'))
         }
     except FileNotFoundError:
-        print(f"⚠️ Faltan archivos de la liga: {liga}")
+        print(f"[WARN] Faltan archivos de la liga: {liga}")
 
 # 2. DTO Actualizado: Ahora exigimos saber qué liga es
 class PartidoData(BaseModel):
@@ -889,7 +890,7 @@ class USSportPayload(BaseModel):
     games: List[USSportGame]
 
 us_models = {}
-for sport in ['nfl', 'mlb', 'nba']:
+for sport in ['nfl', 'mlb', 'nba', 'nhl']:
     try:
         win_m = joblib.load(os.path.join(BASE_DIR, f'modelo_{sport}_win.pkl'))
         margin_file = f'modelo_{sport}_runline.pkl' if sport == 'mlb' else f'modelo_{sport}_margin.pkl'
@@ -907,17 +908,17 @@ for sport in ['nfl', 'mlb', 'nba']:
     except Exception as e:
         print(f'Aviso cargando cerebro {sport}: {e}')
 
-from train_us_sports import NFL_TEAMS, MLB_TEAMS, NBA_TEAMS, normalize_name
+from train_us_sports import NFL_TEAMS, MLB_TEAMS, NBA_TEAMS, NHL_TEAMS, normalize_name
 
 @app.post('/analizar-us-sports')
 def analizar_us_sports(payload: USSportPayload):
     sport = payload.sport.lower()
     if sport not in us_models:
-        return {'error': f'Deporte {sport} no soportado. Disponibles: nfl, mlb, nba'}
+        return {'error': f'Deporte {sport} no soportado. Disponibles: nfl, mlb, nba, nhl'}
 
     engine = us_models[sport]
-    lookup = NFL_TEAMS if sport == 'nfl' else MLB_TEAMS if sport == 'mlb' else NBA_TEAMS
-    home_adv = 48.0 if sport == 'nfl' else 24.0 if sport == 'mlb' else 100.0
+    lookup = NFL_TEAMS if sport == 'nfl' else MLB_TEAMS if sport == 'mlb' else NBA_TEAMS if sport == 'nba' else NHL_TEAMS
+    home_adv = 48.0 if sport == 'nfl' else 24.0 if sport == 'mlb' else 100.0 if sport == 'nba' else 35.0
 
     analisis = []
     for g in payload.games:
@@ -1101,6 +1102,53 @@ def analizar_us_sports(payload: USSportPayload):
                 'under_prob': p_under,
                 'margen_1_5_prob': p_clutch,
                 'margen_6_mas_prob': p_decisivo,
+                'jugada_clave': sug
+            }
+        elif sport == 'nhl':
+            total_line = g.total if g.total != 0 else (6.0 if exp_total > 5.8 else 5.5)
+
+            # Puck Line estándar en hockey es +/- 1.5 goles (desv. estándar típica NHL ~2.1)
+            z_pl = (exp_margin - 1.5) / 2.1
+            p_cover_home_pl = round(float(0.5 * (1.0 + math.erf(z_pl / math.sqrt(2.0)))) * 100.0, 1)
+            p_cover_away_pl = round(100.0 - p_cover_home_pl, 1)
+
+            # Probabilidad Over / Under Goles (desv. estándar NHL ~2.2)
+            z_total = (exp_total - total_line) / 2.2
+            p_over = round(float(0.5 * (1.0 + math.erf(z_total / math.sqrt(2.0)))) * 100.0, 1)
+            p_under = round(100.0 - p_over, 1)
+
+            # Probabilidad de Prórroga / Penaltis (OT / Shootout ~22% a 26%)
+            abs_m = abs(exp_margin)
+            ot_prob = round(min(29.0, max(17.0, 25.5 - abs_m * 2.2)), 1)
+
+            # 1er Periodo (1P)
+            p1_fav = g.home_team if prob_home >= prob_away else g.away_team
+            p1_prob = round(min(68.0, max(prob_home, prob_away) * 0.90), 1)
+
+            if p_cover_away_pl >= 58.0:
+                sug = f"{g.away_team} Puck Line (+1.5 Goles)"
+            elif p_cover_home_pl >= 55.0:
+                sug = f"{g.home_team} Puck Line (-1.5 Goles)"
+            elif p_over >= 56.0:
+                sug = f"Over {total_line} Goles ({p_over}%)"
+            elif p_under >= 56.0:
+                sug = f"Under {total_line} Goles ({p_under}%)"
+            elif ot_prob >= 26.0:
+                sug = f"Empate en Tiempo Regular / Prórroga ({ot_prob}%)"
+            else:
+                sug = f"{p1_fav} Ganador Directo (Inc. OT/SO)"
+
+            props = {
+                'puckline_home': f"{g.home_team} -1.5",
+                'puckline_away': f"{g.away_team} +1.5",
+                'puckline_home_prob': p_cover_home_pl,
+                'puckline_away_prob': p_cover_away_pl,
+                'total_line': total_line,
+                'over_prob': p_over,
+                'under_prob': p_under,
+                'ot_prob': ot_prob,
+                'p1_pick': p1_fav,
+                'p1_prob': p1_prob,
                 'jugada_clave': sug
             }
 

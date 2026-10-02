@@ -111,6 +111,41 @@ NBA_TEAMS = {
     'utah jazz': 'UTA', 'jazz': 'UTA', 'uta': 'UTA',
     'washington wizards': 'WAS', 'wizards': 'WAS', 'was': 'WAS'
 }
+NHL_TEAMS = {
+    'anaheim ducks': 'ANA', 'ducks': 'ANA', 'ana': 'ANA',
+    'boston bruins': 'BOS', 'bruins': 'BOS', 'bos': 'BOS',
+    'buffalo sabres': 'BUF', 'sabres': 'BUF', 'buf': 'BUF',
+    'calgary flames': 'CGY', 'flames': 'CGY', 'cgy': 'CGY',
+    'carolina hurricanes': 'CAR', 'hurricanes': 'CAR', 'car': 'CAR',
+    'chicago blackhawks': 'CHI', 'blackhawks': 'CHI', 'chi': 'CHI',
+    'colorado avalanche': 'COL', 'avalanche': 'COL', 'col': 'COL',
+    'columbus blue jackets': 'CBJ', 'blue jackets': 'CBJ', 'cbj': 'CBJ',
+    'dallas stars': 'DAL', 'stars': 'DAL', 'dal': 'DAL',
+    'detroit red wings': 'DET', 'red wings': 'DET', 'det': 'DET',
+    'edmonton oilers': 'EDM', 'oilers': 'EDM', 'edm': 'EDM',
+    'florida panthers': 'FLA', 'panthers': 'FLA', 'fla': 'FLA',
+    'los angeles kings': 'LAK', 'la kings': 'LAK', 'kings': 'LAK', 'lak': 'LAK', 'la': 'LAK',
+    'minnesota wild': 'MIN', 'wild': 'MIN', 'min': 'MIN',
+    'montreal canadiens': 'MTL', 'canadiens': 'MTL', 'mtl': 'MTL',
+    'nashville predators': 'NSH', 'predators': 'NSH', 'nsh': 'NSH',
+    'new jersey devils': 'NJD', 'devils': 'NJD', 'njd': 'NJD', 'nj': 'NJD',
+    'new york islanders': 'NYI', 'islanders': 'NYI', 'nyi': 'NYI',
+    'new york rangers': 'NYR', 'rangers': 'NYR', 'nyr': 'NYR',
+    'ottawa senators': 'OTT', 'senators': 'OTT', 'ott': 'OTT',
+    'philadelphia flyers': 'PHI', 'flyers': 'PHI', 'phi': 'PHI',
+    'pittsburgh penguins': 'PIT', 'penguins': 'PIT', 'pit': 'PIT',
+    'san jose sharks': 'SJS', 'sharks': 'SJS', 'sjs': 'SJS', 'sj': 'SJS',
+    'seattle kraken': 'SEA', 'kraken': 'SEA', 'sea': 'SEA',
+    'st. louis blues': 'STL', 'blues': 'STL', 'stl': 'STL',
+    'tampa bay lightning': 'TBL', 'lightning': 'TBL', 'tbl': 'TBL', 'tb': 'TBL',
+    'toronto maple leafs': 'TOR', 'maple leafs': 'TOR', 'leafs': 'TOR', 'tor': 'TOR',
+    'utah hockey club': 'UTA', 'utah': 'UTA', 'uta': 'UTA', 'arizona coyotes': 'UTA', 'coyotes': 'UTA',
+    'vancouver canucks': 'VAN', 'canucks': 'VAN', 'van': 'VAN',
+    'vegas golden knights': 'VGK', 'golden knights': 'VGK', 'vgk': 'VGK', 'vegas': 'VGK',
+    'washington capitals': 'WSH', 'capitals': 'WSH', 'wsh': 'WSH', 'was': 'WSH',
+    'winnipeg jets': 'WPG', 'jets': 'WPG', 'wpg': 'WPG'
+}
+
 
 def normalize_name(name, lookup):
     cleaned = str(name).strip().lower()
@@ -279,8 +314,71 @@ def train_nba():
         json.dump(latest_elos, f, indent=2)
     print(f'NBA listo con {len(df_train)} juegos.')
 
+DEFAULT_NHL_ELOS = {
+    'FLA': 1665.0, 'EDM': 1655.4, 'DAL': 1635.0, 'NYR': 1630.4, 'CAR': 1624.6, 'COL': 1621.6,
+    'BOS': 1611.2, 'VAN': 1604.6, 'WPG': 1590.0, 'TOR': 1585.0, 'VGK': 1581.2, 'TBL': 1573.4,
+    'LAK': 1558.4, 'NSH': 1549.2, 'DET': 1520.0, 'WSH': 1515.0, 'NJD': 1510.4, 'PIT': 1502.8,
+    'STL': 1495.0, 'MIN': 1490.8, 'NYI': 1484.6, 'PHI': 1476.8, 'BUF': 1473.8, 'CGY': 1468.0,
+    'SEA': 1467.0, 'OTT': 1460.0, 'MTL': 1450.4, 'UTA': 1447.4, 'CBJ': 1431.2, 'ANA': 1420.0,
+    'CHI': 1406.4, 'SJS': 1380.4
+}
+
+def train_nhl():
+    print('--> Entrenando NHL (Hockey Sobre Hielo)...')
+    elos = DEFAULT_NHL_ELOS.copy()
+    try:
+        req = urllib.request.Request('https://api-web.nhle.com/v1/standings/now', headers={'User-Agent': 'ApexBot/1.0'})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode('utf-8'))
+            for entry in data.get('standings', []):
+                code = entry.get('teamAbbrev', {}).get('default', '')
+                if code in elos:
+                    diff = float(entry.get('goalDifferential', 0))
+                    elos[code] += (diff * 0.4)
+    except Exception as e:
+        print(f'Aviso conectando a API oficial NHL: {e}. Usando matriz base de poderio.')
+
+    HOME_ADV = 35.0
+    np.random.seed(42)
+    records = []
+    teams = list(elos.keys())
+
+    for _ in range(12000):
+        h, a = np.random.choice(teams, size=2, replace=False)
+        h_elo = elos[h]
+        a_elo = elos[a]
+        elo_diff = (h_elo + HOME_ADV) - a_elo
+        p_win = 1.0 / (1.0 + 10.0 ** (-elo_diff / 400.0))
+        h_win = 1 if np.random.rand() < p_win else 0
+        exp_margin = (elo_diff / 180.0)
+        actual_margin = exp_margin + np.random.normal(0, 1.85)
+        exp_total = 6.0 + (abs(elo_diff) / 500.0) * 0.3
+        actual_total = max(2.0, exp_total + np.random.normal(0, 1.9))
+        records.append({
+            'elo_diff': elo_diff,
+            'home_win': h_win,
+            'margin': round(actual_margin, 2),
+            'total_goals': round(actual_total, 2)
+        })
+
+    df_train = pd.DataFrame(records)
+    X = df_train[['elo_diff']]
+    model_win = LogisticRegression().fit(X, df_train['home_win'])
+    model_margin = Ridge().fit(X, df_train['margin'])
+    model_total = Ridge().fit(X, df_train['total_goals'])
+
+    joblib.dump(model_win, os.path.join(BASE_DIR, 'modelo_nhl_win.pkl'))
+    joblib.dump(model_margin, os.path.join(BASE_DIR, 'modelo_nhl_margin.pkl'))
+    joblib.dump(model_total, os.path.join(BASE_DIR, 'modelo_nhl_total.pkl'))
+
+    with open(os.path.join(BASE_DIR, 'nhl_elo_ratings.json'), 'w') as f:
+        json.dump({k: round(v, 1) for k, v in sorted(elos.items(), key=lambda x: x[1], reverse=True)}, f, indent=2)
+    print(f'NHL listo con {len(df_train)} partidos simulados.')
+
+
 if __name__ == '__main__':
     train_nfl()
     train_mlb()
     train_nba()
+    train_nhl()
     print('Entrenamiento US Sports Completado Exitosamente!')
