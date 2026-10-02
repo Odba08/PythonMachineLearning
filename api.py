@@ -135,11 +135,26 @@ f1_cached_result = None
 
 from datetime import datetime, timezone
 
-def ejecutar_simulacion_f1_real(year=2026, gp='Azerbaijan'):
+def ejecutar_simulacion_f1_real(year=2026, gp=None):
     global f1_cache_time, f1_cached_result
     ahora_ts = time.time()
     if f1_cached_result and (ahora_ts - f1_cache_time < 300):
         return f1_cached_result
+
+    # Detección automática del GP según calendario oficial FIA 2026
+    if gp is None or gp == 'auto' or gp == 'Azerbaijan':
+        try:
+            sched = fastf1.get_event_schedule(year)
+            ahora_dt = pd.to_datetime(datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'))
+            valid = sched[sched['Session5DateUtc'].notna()]
+            current = valid[valid['Session5DateUtc'] >= ahora_dt - pd.Timedelta(days=2)]
+            if not current.empty:
+                gp = int(current.iloc[0]['RoundNumber'])
+            else:
+                gp = 16
+        except Exception as e:
+            print(f"Aviso detectando evento F1: {e}")
+            gp = 16
 
     # 1. Detección dinámica de sesiones del fin de semana (FP1, FP2, FP3, Sprint, Qualy)
     event = fastf1.get_event(year, gp)
@@ -333,7 +348,17 @@ def ejecutar_simulacion_f1_real(year=2026, gp='Azerbaijan'):
             'raw_podium': prob_podium
         })
 
+    is_bahrain_in_malaysia = 'Bahrain' in str(event.get('EventName', '')) or 'Malaysia' in str(event.get('OfficialEventName', ''))
+    gp_info = {
+        'nombre': 'Gran Premio de Bahréin (en Malasia / Sepang)' if is_bahrain_in_malaysia else str(event.get('EventName', 'Gran Premio de F1')),
+        'circuito': 'Circuito Internacional de Sepang (Kuala Lumpur)' if is_bahrain_in_malaysia else str(event.get('Location', 'Circuito F1')),
+        'fecha': str(event.get('EventDate', '2026-10-04')).split(' ')[0],
+        'round': int(event.get('RoundNumber', 16)),
+        'official_name': str(event.get('OfficialEventName', ''))
+    }
+
     f1_cached_result = {
+        "gp": gp_info,
         "sesion_mas_reciente": ultima_sesion,
         "sesiones_cargadas": sesiones_procesadas if sesiones_procesadas else [ultima_sesion],
         "lider_sesion_reciente": lider_actual,
@@ -345,11 +370,11 @@ def ejecutar_simulacion_f1_real(year=2026, gp='Azerbaijan'):
 
 @app.post("/analizar-f1")
 def analizar_f1():
-    return ejecutar_simulacion_f1_real(2026, 'Azerbaijan')
+    return ejecutar_simulacion_f1_real(2026, None)
 
 @app.get("/analizar-f1")
 def analizar_f1_get():
-    return ejecutar_simulacion_f1_real(2026, 'Azerbaijan')
+    return ejecutar_simulacion_f1_real(2026, None)
 
 # ------------------------------------------------------------------
 # 5. MOTOR PREDICTIVO UFC (+EV VALUE HUNTER & THE-ODDS-API)
