@@ -28,8 +28,8 @@ def ejecutar_simulacion():
     sched = fastf1.get_event_schedule(year)
     ahora_dt = pd.to_datetime(datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S'))
     valid = sched[sched['Session5DateUtc'].notna()]
-    current = valid[valid['Session5DateUtc'] >= ahora_dt - pd.Timedelta(days=2)]
-    event_row = current.iloc[0] if not current.empty else sched.iloc[17]
+    current = valid[valid['Session5DateUtc'] >= ahora_dt]
+    event_row = current.iloc[0] if not current.empty else sched.iloc[18]
     round_num = int(event_row['RoundNumber'])
 
     event = fastf1.get_event(year, round_num)
