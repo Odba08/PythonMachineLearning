@@ -188,22 +188,52 @@ def ejecutar_simulacion():
     n_sims = 10000
     n_pilotos = len(pilotos)
 
-    qualy_base_pace = np.array([
-        (p['latest_delta'] * 0.70 + p['fp1_delta'] * 0.20 - (p['puntos'] / 300.0) * 0.2)
-        for p in pilotos
-    ])
-    qualy_base_pace -= qualy_base_pace.min()
+    ev_name = str(event.get('EventName', '')).lower() if 'event' in locals() and hasattr(event, 'get') else ''
+    ev_loc = str(event.get('Location', '')).lower() if 'event' in locals() and hasattr(event, 'get') else ''
+    is_street_circuit = any(k in ev_name or k in ev_loc for k in ['singapore', 'marina bay', 'monaco', 'baku', 'vegas', 'jeddah'])
+    is_night_race = any(k in ev_name or k in ev_loc for k in ['singapore', 'marina bay', 'bahrain', 'qatar', 'vegas', 'abu dhabi'])
 
-    race_base_pace = np.array([
-        (p['latest_delta'] * 0.50 + p['fp2_delta'] * 0.20 - (p['victorias'] * 0.12) - (p['puntos'] / 250.0) * 0.35)
-        for p in pilotos
-    ])
+    if is_night_race:
+        w_fp2, w_fp1, w_latest = 0.60, 0.10, 0.30
+    else:
+        w_fp2, w_fp1, w_latest = 0.40, 0.20, 0.40
+
+    if qualy_completada:
+        qualy_base_pace = np.array([p['latest_pos'] for p in pilotos], dtype=float)
+    else:
+        qualy_base_pace = np.array([
+            (p['latest_delta'] * w_latest + p['fp1_delta'] * w_fp1 - (p['puntos'] / 300.0) * 0.20)
+            for p in pilotos
+        ])
+        qualy_base_pace -= qualy_base_pace.min()
+
+    if is_street_circuit:
+        race_base_pace = np.array([
+            (qualy_base_pace[idx] * 0.60 + p['fp2_delta'] * 0.30 - (p['victorias'] * 0.10) - (p['puntos'] / 350.0) * 0.25)
+            for idx, p in enumerate(pilotos)
+        ])
+    else:
+        race_base_pace = np.array([
+            (p['latest_delta'] * 0.40 + p['fp2_delta'] * 0.35 - (p['victorias'] * 0.12) - (p['puntos'] / 250.0) * 0.35)
+            for p in pilotos
+        ])
     race_base_pace -= race_base_pace.min()
 
-    qualy_sims = qualy_base_pace[:, None] + np.random.normal(0, 0.18, (n_pilotos, n_sims))
-    pole_counts = np.sum(qualy_sims == np.min(qualy_sims, axis=0), axis=1)
+    if qualy_completada:
+        pole_counts = np.zeros(n_pilotos)
+        winner_pole_idx = int(np.argmin(qualy_base_pace))
+        pole_counts[winner_pole_idx] = n_sims
+    else:
+        qualy_sims = qualy_base_pace[:, None] + np.random.normal(0, 0.18, (n_pilotos, n_sims))
+        pole_counts = np.sum(qualy_sims == np.min(qualy_sims, axis=0), axis=1)
 
-    race_sims = race_base_pace[:, None] + np.random.normal(0, 0.32, (n_pilotos, n_sims))
+    dnf_prob = 0.14 if is_street_circuit else 0.07
+    race_noise_scale = 0.38 if is_street_circuit else 0.28
+
+    race_sims = race_base_pace[:, None] + np.random.normal(0, race_noise_scale, (n_pilotos, n_sims))
+    dnf_mask = np.random.random((n_pilotos, n_sims)) < dnf_prob
+    race_sims[dnf_mask] += 100.0
+
     race_ranks = np.argsort(race_sims, axis=0)
 
     win_counts = np.zeros(n_pilotos)
@@ -211,9 +241,12 @@ def ejecutar_simulacion():
 
     for sim in range(n_sims):
         winner_idx = race_ranks[0, sim]
-        win_counts[winner_idx] += 1
+        if not dnf_mask[winner_idx, sim]:
+            win_counts[winner_idx] += 1
         for top3_pos in range(3):
-            podium_counts[race_ranks[top3_pos, sim]] += 1
+            p_idx = race_ranks[top3_pos, sim]
+            if not dnf_mask[p_idx, sim]:
+                podium_counts[p_idx] += 1
 
     resultados = []
     for i, p in enumerate(pilotos):

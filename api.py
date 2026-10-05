@@ -48,20 +48,74 @@ class PartidoData(BaseModel):
 import math
 from scipy.stats import poisson
 
-def calcular_poisson_marcadores(home_elo: float, away_elo: float, form5_diff: float):
+LIGA_PROFILES = {
+    'Premier': {'base_home': 1.55, 'base_away': 1.25, 'home_adv': 0.18, 'rho': -0.11},
+    'LaLiga': {'base_home': 1.38, 'base_away': 1.05, 'home_adv': 0.22, 'rho': -0.13},
+    'Bundesliga': {'base_home': 1.72, 'base_away': 1.35, 'home_adv': 0.16, 'rho': -0.10},
+    'SerieA': {'base_home': 1.42, 'base_away': 1.12, 'home_adv': 0.20, 'rho': -0.12},
+    'Ligue1': {'base_home': 1.45, 'base_away': 1.15, 'home_adv': 0.20, 'rho': -0.12},
+    'Eredivisie': {'base_home': 1.78, 'base_away': 1.36, 'home_adv': 0.18, 'rho': -0.09},
+    'SuperLig': {'base_home': 1.58, 'base_away': 1.18, 'home_adv': 0.26, 'rho': -0.11},
+    'Brasileirao': {'base_home': 1.48, 'base_away': 0.95, 'home_adv': 0.32, 'rho': -0.14},
+    'Libertadores': {'base_home': 1.55, 'base_away': 0.90, 'home_adv': 0.35, 'rho': -0.13},
+    'Champions': {'base_home': 1.62, 'base_away': 1.30, 'home_adv': 0.19, 'rho': -0.10},
+    'Saudi': {'base_home': 1.65, 'base_away': 1.25, 'home_adv': 0.22, 'rho': -0.10},
+    'Championship': {'base_home': 1.40, 'base_away': 1.15, 'home_adv': 0.18, 'rho': -0.12},
+    'Portugal': {'base_home': 1.42, 'base_away': 1.10, 'home_adv': 0.22, 'rho': -0.13},
+}
+DEFAULT_LIGA_PROFILE = {'base_home': 1.45, 'base_away': 1.15, 'home_adv': 0.20, 'rho': -0.12}
+
+def tau_dixon_coles(x: int, y: int, lambda_h: float, mu_a: float, rho: float) -> float:
+    if x == 0 and y == 0:
+        return 1.0 - (lambda_h * mu_a * rho)
+    elif x == 0 and y == 1:
+        return 1.0 + (lambda_h * rho)
+    elif x == 1 and y == 0:
+        return 1.0 + (mu_a * rho)
+    elif x == 1 and y == 1:
+        return 1.0 - rho
+    else:
+        return 1.0
+
+def calcular_dixon_coles_marcadores(home_elo: float, away_elo: float, form5_diff: float, liga: str):
+    prof = LIGA_PROFILES.get(liga, DEFAULT_LIGA_PROFILE)
     elo_diff = home_elo - away_elo
-    lambda_home = max(0.3, min(4.2, 1.40 + (elo_diff / 350.0) + (form5_diff / 250.0)))
-    mu_away = max(0.2, min(4.2, 1.10 - (elo_diff / 350.0) - (form5_diff / 250.0)))
-    
+
+    lambda_home = max(0.3, min(4.5, prof['base_home'] + (elo_diff / 320.0) + (form5_diff / 240.0) + prof['home_adv']))
+    mu_away = max(0.2, min(4.5, prof['base_away'] - (elo_diff / 320.0) - (form5_diff / 240.0)))
+    rho = prof['rho']
+
     scores = []
-    for h in range(5):
-        for a in range(5):
-            prob = poisson.pmf(h, lambda_home) * poisson.pmf(a, mu_away)
-            scores.append({"marcador": f"{h}-{a}", "prob_pct": round(prob * 100, 2), "raw": prob})
-            
-    scores.sort(key=lambda x: x["raw"], reverse=True)
-    top3 = [{"marcador": s["marcador"], "probabilidad": f"{s['prob_pct']}%"} for s in scores[:3]]
-    return round(lambda_home, 2), round(mu_away, 2), top3
+    tot_prob = 0.0
+    for h in range(6):
+        for a in range(6):
+            tau = tau_dixon_coles(h, a, lambda_home, mu_away, rho)
+            p = max(0.0, tau) * poisson.pmf(h, lambda_home) * poisson.pmf(a, mu_away)
+            tot_prob += p
+            scores.append({"h": h, "a": a, "raw": p})
+
+    for s in scores:
+        s['raw'] = s['raw'] / tot_prob if tot_prob > 0 else s['raw']
+        s['prob_pct'] = round(s['raw'] * 100.0, 2)
+        s['marcador'] = f"{s['h']}-{s['a']}"
+
+    scores_sorted = sorted(scores, key=lambda x: x["raw"], reverse=True)
+    top3 = [{"marcador": s["marcador"], "probabilidad": f"{s['prob_pct']}%"} for s in scores_sorted[:3]]
+
+    dc_p_home = sum(s['raw'] for s in scores if s['h'] > s['a'])
+    dc_p_draw = sum(s['raw'] for s in scores if s['h'] == s['a'])
+    dc_p_away = sum(s['raw'] for s in scores if s['h'] < s['a'])
+    dc_p_over = sum(s['raw'] for s in scores if s['h'] + s['a'] > 2.5)
+    dc_p_under = sum(s['raw'] for s in scores if s['h'] + s['a'] <= 2.5)
+    dc_p_btts_si = sum(s['raw'] for s in scores if s['h'] > 0 and s['a'] > 0)
+    dc_p_btts_no = 1.0 - dc_p_btts_si
+
+    dc_metrics = {
+        'dc_p_home': dc_p_home, 'dc_p_draw': dc_p_draw, 'dc_p_away': dc_p_away,
+        'dc_p_over': dc_p_over, 'dc_p_under': dc_p_under,
+        'dc_p_btts_si': dc_p_btts_si, 'dc_p_btts_no': dc_p_btts_no
+    }
+    return round(lambda_home, 2), round(mu_away, 2), top3, dc_metrics
 
 # 3. Endpoint Dinámico
 @app.post("/analizar-completo")
@@ -83,17 +137,31 @@ def analizar_completo(partidos: List[PartidoData]):
         features = df[['Elo_Diff', 'Form5_Diff', 'Form3Home', 'Form3Away']]
         features_scaled = motor['scaler'].transform(features)
         
-        # Predicciones
+        # Predicciones ML base
         prob_1x2 = motor['modelo_1x2'].predict_proba(features_scaled)[0]
         prob_goles = motor['modelo_goles'].predict_proba(features_scaled)[0]
         prob_btts = motor['modelo_btts'].predict_proba(features_scaled)[0]
         
-        p_visitante, p_empate, p_local = prob_1x2[0], prob_1x2[1], prob_1x2[2]
-        p_under, p_over = prob_goles[0], prob_goles[1]
-        p_btts_no, p_btts_si = prob_btts[0], prob_btts[1]
-        
-        # Poisson Math Model
-        xg_home, xg_away, marcadores_top = calcular_poisson_marcadores(p.HomeElo, p.AwayElo, df['Form5_Diff'].iloc[0])
+        # Modelo Dixon-Coles calibrado por liga
+        xg_home, xg_away, marcadores_top, dc = calcular_dixon_coles_marcadores(
+            p.HomeElo, p.AwayElo, df['Form5_Diff'].iloc[0], p.Liga
+        )
+
+        # Ensamble Bayesiano: 60% Clasificador ML entrenado + 40% Dixon-Coles calibrado
+        p_visitante_raw = 0.60 * prob_1x2[0] + 0.40 * dc['dc_p_away']
+        p_empate_raw = 0.60 * prob_1x2[1] + 0.40 * dc['dc_p_draw']
+        p_local_raw = 0.60 * prob_1x2[2] + 0.40 * dc['dc_p_home']
+        tot_1x2 = p_visitante_raw + p_empate_raw + p_local_raw
+
+        p_visitante = p_visitante_raw / tot_1x2
+        p_empate = p_empate_raw / tot_1x2
+        p_local = p_local_raw / tot_1x2
+
+        p_over = 0.60 * prob_goles[1] + 0.40 * dc['dc_p_over']
+        p_under = 1.0 - p_over
+
+        p_btts_si = 0.60 * prob_btts[1] + 0.40 * dc['dc_p_btts_si']
+        p_btts_no = 1.0 - p_btts_si
         
         resultado = {
             "partido": f"{p.HomeTeam} vs {p.AwayTeam}",
@@ -115,6 +183,10 @@ def analizar_completo(partidos: List[PartidoData]):
             "mercado_goles": {
                 "Over_2_5": f"{round(p_over * 100, 2)}%",
                 "Under_2_5": f"{round(p_under * 100, 2)}%"
+            },
+            "ambos_anotan": {
+                "Si": f"{round(p_btts_si * 100, 2)}%",
+                "No": f"{round(p_btts_no * 100, 2)}%"
             },
             "marcadores_exactos": marcadores_top
         }
@@ -296,32 +368,59 @@ def ejecutar_simulacion_f1_real(year=2026, gp=None):
     n_sims = 10000
     n_pilotos = len(pilotos)
 
+    # Detección de características del circuito (urbano/callejero vs tradicional)
+    ev_name = str(event.get('EventName', '')).lower()
+    ev_loc = str(event.get('Location', '')).lower()
+    is_street_circuit = any(k in ev_name or k in ev_loc for k in ['singapore', 'marina bay', 'monaco', 'baku', 'vegas', 'jeddah'])
+    is_night_race = any(k in ev_name or k in ev_loc for k in ['singapore', 'marina bay', 'bahrain', 'qatar', 'vegas', 'abu dhabi'])
+
+    # En carreras nocturnas (Singapur, Baréin), la FP2 se corre con condiciones de pista idénticas a Qualy y Carrera
+    if is_night_race:
+        w_fp2, w_fp1, w_latest = 0.60, 0.10, 0.30
+    else:
+        w_fp2, w_fp1, w_latest = 0.40, 0.20, 0.40
+
     # Si la Qualy ya se corrió, la Pole es 100% certera para el P1
     if qualy_completada:
         qualy_base_pace = np.array([p['latest_pos'] for p in pilotos], dtype=float)
     else:
         qualy_base_pace = np.array([
-            (p['latest_delta'] * 0.70 + p['fp1_delta'] * 0.20 - (p['puntos'] / 300.0) * 0.2)
+            (p['latest_delta'] * w_latest + p['fp1_delta'] * w_fp1 - (p['puntos'] / 300.0) * 0.20)
             for p in pilotos
         ])
         qualy_base_pace -= qualy_base_pace.min()
 
-    race_base_pace = np.array([
-        (p['latest_delta'] * 0.50 + p['fp2_delta'] * 0.20 - (p['victorias'] * 0.12) - (p['puntos'] / 250.0) * 0.35)
-        for p in pilotos
-    ])
+    # Ritmo de carrera: En circuitos urbanos estrechos (Singapur), adelantar es casi imposible (la posición en parrilla manda)
+    if is_street_circuit:
+        # Mayor peso al ritmo a una vuelta y posición por la imposibilidad de adelantamiento
+        race_base_pace = np.array([
+            (qualy_base_pace[idx] * 0.60 + p['fp2_delta'] * 0.30 - (p['victorias'] * 0.10) - (p['puntos'] / 350.0) * 0.25)
+            for idx, p in enumerate(pilotos)
+        ])
+    else:
+        race_base_pace = np.array([
+            (p['latest_delta'] * 0.40 + p['fp2_delta'] * 0.35 - (p['victorias'] * 0.12) - (p['puntos'] / 250.0) * 0.35)
+            for p in pilotos
+        ])
     race_base_pace -= race_base_pace.min()
 
     if qualy_completada:
         pole_counts = np.zeros(n_pilotos)
-        # El P1 de qualy tiene el 100% de la Pole
         winner_pole_idx = int(np.argmin(qualy_base_pace))
         pole_counts[winner_pole_idx] = n_sims
     else:
         qualy_sims = qualy_base_pace[:, None] + np.random.normal(0, 0.18, (n_pilotos, n_sims))
         pole_counts = np.sum(qualy_sims == np.min(qualy_sims, axis=0), axis=1)
 
-    race_sims = race_base_pace[:, None] + np.random.normal(0, 0.32, (n_pilotos, n_sims))
+    # Varianza de carrera con Safety Car y riesgo de DNF
+    # Singapur tiene 100% de historial de Safety Car y ~14% de tasa de abandonos
+    dnf_prob = 0.14 if is_street_circuit else 0.07
+    race_noise_scale = 0.38 if is_street_circuit else 0.28
+
+    race_sims = race_base_pace[:, None] + np.random.normal(0, race_noise_scale, (n_pilotos, n_sims))
+    dnf_mask = np.random.random((n_pilotos, n_sims)) < dnf_prob
+    race_sims[dnf_mask] += 100.0  # Penalizar DNF mandándolo al fondo
+
     race_ranks = np.argsort(race_sims, axis=0)
 
     win_counts = np.zeros(n_pilotos)
@@ -329,9 +428,12 @@ def ejecutar_simulacion_f1_real(year=2026, gp=None):
 
     for sim in range(n_sims):
         winner_idx = race_ranks[0, sim]
-        win_counts[winner_idx] += 1
+        if not dnf_mask[winner_idx, sim]:
+            win_counts[winner_idx] += 1
         for top3_pos in range(3):
-            podium_counts[race_ranks[top3_pos, sim]] += 1
+            p_idx = race_ranks[top3_pos, sim]
+            if not dnf_mask[p_idx, sim]:
+                podium_counts[p_idx] += 1
 
     resultados = []
     for i, p in enumerate(pilotos):
