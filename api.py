@@ -476,6 +476,8 @@ def recargar_datos_peleadores():
                             (r.get(f'{prefix}win_by_Decision_Split', 0) or 0) +
                             (r.get(f'{prefix}win_by_Decision_Majority', 0) or 0)
                         ),
+                        'avg_td_pct': float(r.get(f'{prefix}avg_TD_pct', 0.3)) if not pd.isna(r.get(f'{prefix}avg_TD_pct')) else 0.3,
+                        'avg_sig_str_pct': float(r.get(f'{prefix}avg_SIG_STR_pct', 0.4)) if not pd.isna(r.get(f'{prefix}avg_SIG_STR_pct')) else 0.4,
                     }
         print(f"Estadísticas de {len(fighter_career_stats)} peleadores compiladas en memoria.")
     except Exception as e:
@@ -645,10 +647,31 @@ def predecir_combate_dinamico(f_red: str, f_blue: str, weight_class: str = 'Bant
         'total_title_bouts': 0,
         'ko_wins': 0,
         'sub_wins': 0,
-        'dec_wins': 0
+        'dec_wins': 0,
+        'avg_td_pct': 0.3,
+        'avg_sig_str_pct': 0.4
     }
     s_r = fighter_career_stats.get(k_r, default_s)
     s_b = fighter_career_stats.get(k_b, default_s)
+
+    # Variables cuantitativas avanzadas (estilos, precisión y maldición de edad 35+)
+    light_classes = [
+        'flyweight', 'bantamweight', 'featherweight', 'lightweight', 'welterweight',
+        'strawweight'
+    ]
+    wc_lower = str(weight_class).lower() if weight_class else ''
+    is_light = 1 if any(lc in wc_lower for lc in light_classes) else 0
+
+    r_age_curse = 1.0 if (a_r >= 35.0 and is_light == 1) else 0.0
+    b_age_curse = 1.0 if (a_b >= 35.0 and is_light == 1) else 0.0
+    age_curse_dif = b_age_curse - r_age_curse
+
+    td_pct_dif = float(s_b.get('avg_td_pct', 0.3)) - float(s_r.get('avg_td_pct', 0.3))
+    sig_str_pct_dif = float(s_b.get('avg_sig_str_pct', 0.4)) - float(s_r.get('avg_sig_str_pct', 0.4))
+
+    r_str_power = float(s_r.get('sig_str', 3.0)) * float(s_r.get('avg_sig_str_pct', 0.4))
+    b_str_power = float(s_b.get('sig_str', 3.0)) * float(s_b.get('avg_sig_str_pct', 0.4))
+    str_power_dif = b_str_power - r_str_power
 
     # Nota crítica: En ufc-master.csv todos los campos _dif están entrenados como Blue - Red (B - R)
     diffs = {
@@ -667,6 +690,10 @@ def predecir_combate_dinamico(f_red: str, f_blue: str, weight_class: str = 'Bant
         'total_title_bout_dif': s_b['total_title_bouts'] - s_r['total_title_bouts'],
         'ko_dif': s_b['ko_wins'] - s_r['ko_wins'],
         'sub_dif': s_b['sub_wins'] - s_r['sub_wins'],
+        'age_curse_dif': age_curse_dif,
+        'td_pct_dif': td_pct_dif,
+        'sig_str_pct_dif': sig_str_pct_dif,
+        'str_power_dif': str_power_dif,
     }
 
     x_df = pd.DataFrame([[diffs[c] for c in ufc_features]], columns=ufc_features)
