@@ -94,10 +94,15 @@ def calcular_dixon_coles_marcadores(home_elo: float, away_elo: float, form5_diff
 
     scores = []
     tot_prob = 0.0
+    exp_neg_lh = math.exp(-lambda_home)
+    exp_neg_mu = math.exp(-mu_away)
+    poiss_h = [(exp_neg_lh * (lambda_home ** h)) / math.factorial(h) for h in range(6)]
+    poiss_a = [(exp_neg_mu * (mu_away ** a)) / math.factorial(a) for a in range(6)]
+
     for h in range(6):
         for a in range(6):
             tau = tau_dixon_coles(h, a, lambda_home, mu_away, rho)
-            p = max(0.0, tau) * poisson.pmf(h, lambda_home) * poisson.pmf(a, mu_away)
+            p = max(0.0, tau) * poiss_h[h] * poiss_a[a]
             tot_prob += p
             scores.append({"h": h, "a": a, "raw": p})
 
@@ -137,11 +142,11 @@ def analizar_completo(partidos: List[PartidoData]):
         # Seleccionamos el motor correcto para este partido
         motor = motores[p.Liga]
         
-        df = pd.DataFrame([p.dict()])
-        df['Elo_Diff'] = df['HomeElo'] - df['AwayElo']
-        df['Form5_Diff'] = df['Form5Home'] - df['Form5Away']
+        elo_diff = p.HomeElo - p.AwayElo
+        form5_diff = p.Form5Home - p.Form5Away
         
-        features = df[['Elo_Diff', 'Form5_Diff', 'Form3Home', 'Form3Away']]
+        # Inferencia ultra-rápida sin sobrecarga de DataFrame
+        features = [[elo_diff, form5_diff, p.Form3Home, p.Form3Away]]
         features_scaled = motor['scaler'].transform(features)
         
         # Predicciones ML base
@@ -151,7 +156,7 @@ def analizar_completo(partidos: List[PartidoData]):
         
         # Modelo Dixon-Coles calibrado por liga
         xg_home, xg_away, marcadores_top, dc = calcular_dixon_coles_marcadores(
-            p.HomeElo, p.AwayElo, df['Form5_Diff'].iloc[0], p.Liga
+            p.HomeElo, p.AwayElo, form5_diff, p.Liga
         )
 
         # Ensamble Bayesiano: 60% Clasificador ML entrenado + 40% Dixon-Coles calibrado
