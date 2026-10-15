@@ -17,7 +17,7 @@ app = FastAPI(title="Motor Cuantitativo Multi-Liga")
 ligas_soportadas = [
     'Championship', 'Premier', 'LaLiga', 'Bundesliga', 'SerieA',
     'Ligue1', 'Portugal', 'Eredivisie', 'SuperLig', 'Brasileirao', 'Saudi',
-    'Champions', 'Libertadores'
+    'Champions', 'Libertadores', 'EuropaLeague', 'ConferenceLeague'
 ]
 motores = {}
 
@@ -32,6 +32,11 @@ for liga in ligas_soportadas:
         }
     except FileNotFoundError:
         print(f"[WARN] Faltan archivos de la liga: {liga}")
+
+# Modelos compartidos para competiciones UEFA
+if 'Champions' in motores:
+    motores['EuropaLeague'] = motores['Champions']
+    motores['ConferenceLeague'] = motores['Champions']
 
 # 2. DTO Actualizado: Ahora exigimos saber qué liga es
 class PartidoData(BaseModel):
@@ -59,6 +64,8 @@ LIGA_PROFILES = {
     'Brasileirao': {'base_home': 1.48, 'base_away': 0.95, 'home_adv': 0.32, 'rho': -0.14},
     'Libertadores': {'base_home': 1.55, 'base_away': 0.90, 'home_adv': 0.35, 'rho': -0.13},
     'Champions': {'base_home': 1.62, 'base_away': 1.30, 'home_adv': 0.19, 'rho': -0.10},
+    'EuropaLeague': {'base_home': 1.60, 'base_away': 1.28, 'home_adv': 0.20, 'rho': -0.10},
+    'ConferenceLeague': {'base_home': 1.65, 'base_away': 1.25, 'home_adv': 0.22, 'rho': -0.09},
     'Saudi': {'base_home': 1.65, 'base_away': 1.25, 'home_adv': 0.22, 'rho': -0.10},
     'Championship': {'base_home': 1.40, 'base_away': 1.15, 'home_adv': 0.18, 'rho': -0.12},
     'Portugal': {'base_home': 1.42, 'base_away': 1.10, 'home_adv': 0.22, 'rho': -0.13},
