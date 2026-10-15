@@ -540,13 +540,27 @@ WEIGHT_CLASS_PRIORS = {
 }
 DEFAULT_PRIOR = {'ko': 0.320, 'sub': 0.180, 'dec': 0.500}
 
+import unicodedata
+import re
+
 def norm_name(n):
     return str(n).replace('.', '').strip().lower()
+
+def clean_fighter_name(n):
+    if not n:
+        return ''
+    s = unicodedata.normalize('NFD', str(n))
+    s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
+    s = re.sub(r'\b(jr|sr|iii|ii|iv)\b', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'[^a-zA-Z0-9\s]', '', s)
+    return re.sub(r'\s+', ' ', s).strip().lower()
 
 def recargar_datos_peleadores():
     global ft_df, fighter_career_stats
     try:
         ft_df = pd.read_csv(os.path.join(BASE_DIR, 'data', 'ufc_fighter_tott.csv'))
+        ft_df['norm_name'] = ft_df['FIGHTER'].astype(str).str.replace('.', '', regex=False).str.strip().str.lower()
+        ft_df['clean_name'] = ft_df['FIGHTER'].apply(clean_fighter_name)
     except Exception as e:
         print(f"Aviso leyendo tott: {e}")
         ft_df = pd.DataFrame()
@@ -558,29 +572,33 @@ def recargar_datos_peleadores():
             for prefix, name_col in [('R_', 'R_fighter'), ('B_', 'B_fighter')]:
                 raw_name = str(r[name_col]).strip()
                 k = norm_name(raw_name)
+                ck = clean_fighter_name(raw_name)
+                stats_obj = {
+                    'name': raw_name,
+                    'sig_str': float(r.get(f'{prefix}avg_SIG_STR_landed', 3.5)) if not pd.isna(r.get(f'{prefix}avg_SIG_STR_landed')) else 3.5,
+                    'avg_td': float(r.get(f'{prefix}avg_TD_landed', 1.2)) if not pd.isna(r.get(f'{prefix}avg_TD_landed')) else 1.2,
+                    'avg_sub': float(r.get(f'{prefix}avg_SUB_ATT', 0.5)) if not pd.isna(r.get(f'{prefix}avg_SUB_ATT')) else 0.5,
+                    'win_streak': float(r.get(f'{prefix}current_win_streak', 0)) if not pd.isna(r.get(f'{prefix}current_win_streak')) else 0.0,
+                    'longest_win_streak': float(r.get(f'{prefix}longest_win_streak', 1)) if not pd.isna(r.get(f'{prefix}longest_win_streak')) else 1.0,
+                    'lose_streak': float(r.get(f'{prefix}current_lose_streak', 0)) if not pd.isna(r.get(f'{prefix}current_lose_streak')) else 0.0,
+                    'wins': float(r.get(f'{prefix}wins', 5)) if not pd.isna(r.get(f'{prefix}wins')) else 5.0,
+                    'losses': float(r.get(f'{prefix}losses', 2)) if not pd.isna(r.get(f'{prefix}losses')) else 2.0,
+                    'total_rounds': float(r.get(f'{prefix}total_rounds_fought', 15)) if not pd.isna(r.get(f'{prefix}total_rounds_fought')) else 15.0,
+                    'total_title_bouts': float(r.get(f'{prefix}total_title_bouts', 0)) if not pd.isna(r.get(f'{prefix}total_title_bouts')) else 0.0,
+                    'ko_wins': float(r.get(f'{prefix}win_by_KO/TKO', 1)) if not pd.isna(r.get(f'{prefix}win_by_KO/TKO')) else 1.0,
+                    'sub_wins': float(r.get(f'{prefix}win_by_Submission', 1)) if not pd.isna(r.get(f'{prefix}win_by_Submission')) else 1.0,
+                    'dec_wins': float(
+                        (r.get(f'{prefix}win_by_Decision_Unanimous', 0) or 0) +
+                        (r.get(f'{prefix}win_by_Decision_Split', 0) or 0) +
+                        (r.get(f'{prefix}win_by_Decision_Majority', 0) or 0)
+                    ),
+                    'avg_td_pct': float(r.get(f'{prefix}avg_TD_pct', 0.3)) if not pd.isna(r.get(f'{prefix}avg_TD_pct')) else 0.3,
+                    'avg_sig_str_pct': float(r.get(f'{prefix}avg_SIG_STR_pct', 0.4)) if not pd.isna(r.get(f'{prefix}avg_SIG_STR_pct')) else 0.4,
+                }
                 if k not in fighter_career_stats:
-                    fighter_career_stats[k] = {
-                        'name': raw_name,
-                        'sig_str': float(r.get(f'{prefix}avg_SIG_STR_landed', 3.5)) if not pd.isna(r.get(f'{prefix}avg_SIG_STR_landed')) else 3.5,
-                        'avg_td': float(r.get(f'{prefix}avg_TD_landed', 1.2)) if not pd.isna(r.get(f'{prefix}avg_TD_landed')) else 1.2,
-                        'avg_sub': float(r.get(f'{prefix}avg_SUB_ATT', 0.5)) if not pd.isna(r.get(f'{prefix}avg_SUB_ATT')) else 0.5,
-                        'win_streak': float(r.get(f'{prefix}current_win_streak', 0)) if not pd.isna(r.get(f'{prefix}current_win_streak')) else 0.0,
-                        'longest_win_streak': float(r.get(f'{prefix}longest_win_streak', 1)) if not pd.isna(r.get(f'{prefix}longest_win_streak')) else 1.0,
-                        'lose_streak': float(r.get(f'{prefix}current_lose_streak', 0)) if not pd.isna(r.get(f'{prefix}current_lose_streak')) else 0.0,
-                        'wins': float(r.get(f'{prefix}wins', 5)) if not pd.isna(r.get(f'{prefix}wins')) else 5.0,
-                        'losses': float(r.get(f'{prefix}losses', 2)) if not pd.isna(r.get(f'{prefix}losses')) else 2.0,
-                        'total_rounds': float(r.get(f'{prefix}total_rounds_fought', 15)) if not pd.isna(r.get(f'{prefix}total_rounds_fought')) else 15.0,
-                        'total_title_bouts': float(r.get(f'{prefix}total_title_bouts', 0)) if not pd.isna(r.get(f'{prefix}total_title_bouts')) else 0.0,
-                        'ko_wins': float(r.get(f'{prefix}win_by_KO/TKO', 1)) if not pd.isna(r.get(f'{prefix}win_by_KO/TKO')) else 1.0,
-                        'sub_wins': float(r.get(f'{prefix}win_by_Submission', 1)) if not pd.isna(r.get(f'{prefix}win_by_Submission')) else 1.0,
-                        'dec_wins': float(
-                            (r.get(f'{prefix}win_by_Decision_Unanimous', 0) or 0) +
-                            (r.get(f'{prefix}win_by_Decision_Split', 0) or 0) +
-                            (r.get(f'{prefix}win_by_Decision_Majority', 0) or 0)
-                        ),
-                        'avg_td_pct': float(r.get(f'{prefix}avg_TD_pct', 0.3)) if not pd.isna(r.get(f'{prefix}avg_TD_pct')) else 0.3,
-                        'avg_sig_str_pct': float(r.get(f'{prefix}avg_SIG_STR_pct', 0.4)) if not pd.isna(r.get(f'{prefix}avg_SIG_STR_pct')) else 0.4,
-                    }
+                    fighter_career_stats[k] = stats_obj
+                if ck not in fighter_career_stats:
+                    fighter_career_stats[ck] = stats_obj
         print(f"Estadísticas de {len(fighter_career_stats)} peleadores compiladas en memoria.")
     except Exception as e:
         print(f"Aviso compilando estadísticas de carrera: {e}")
@@ -721,20 +739,52 @@ def calcular_props_combate(f_red, f_blue, prob_red, prob_blue, weight_class):
         'jugada_alternativa': top_alt
     }
 
+def buscar_tott_row(name: str):
+    if ft_df is None or ft_df.empty:
+        return None
+    k = norm_name(name)
+    m = ft_df[ft_df['norm_name'] == k]
+    if not m.empty:
+        return m.iloc[0]
+    ck = clean_fighter_name(name)
+    m2 = ft_df[ft_df['clean_name'] == ck]
+    if not m2.empty:
+        return m2.iloc[0]
+    tokens = ck.split()
+    if len(tokens) >= 2:
+        last = tokens[-1]
+        cands = ft_df[ft_df['clean_name'].str.contains(last, na=False)]
+        for _, row in cands.iterrows():
+            if tokens[0] in str(row['clean_name']):
+                return row
+    return None
+
+def buscar_career_stats_obj(name: str, default_s: dict):
+    k = norm_name(name)
+    if k in fighter_career_stats:
+        return fighter_career_stats[k]
+    ck = clean_fighter_name(name)
+    if ck in fighter_career_stats:
+        return fighter_career_stats[ck]
+    tokens = ck.split()
+    if len(tokens) >= 2:
+        last = tokens[-1]
+        for fk, stats in fighter_career_stats.items():
+            if last in fk and tokens[0] in fk:
+                return stats
+    return default_s
+
 def predecir_combate_dinamico(f_red: str, f_blue: str, weight_class: str = 'Bantamweight'):
-    k_r = norm_name(f_red)
-    k_b = norm_name(f_blue)
+    row_r = buscar_tott_row(f_red)
+    row_b = buscar_tott_row(f_blue)
 
-    m_red = ft_df[ft_df['FIGHTER'].astype(str).str.replace('.', '', regex=False).str.strip().str.lower() == k_r] if ft_df is not None and not ft_df.empty else pd.DataFrame()
-    m_blue = ft_df[ft_df['FIGHTER'].astype(str).str.replace('.', '', regex=False).str.strip().str.lower() == k_b] if ft_df is not None and not ft_df.empty else pd.DataFrame()
+    h_r = parse_height_cm(row_r['HEIGHT']) if row_r is not None else 178.0
+    r_r = parse_reach_cm(row_r['REACH'], h_r) if row_r is not None else h_r
+    a_r = parse_age(row_r['DOB']) if row_r is not None else 30.0
 
-    h_r = parse_height_cm(m_red.iloc[0]['HEIGHT']) if not m_red.empty else 178.0
-    r_r = parse_reach_cm(m_red.iloc[0]['REACH'], h_r) if not m_red.empty else h_r
-    a_r = parse_age(m_red.iloc[0]['DOB']) if not m_red.empty else 30.0
-
-    h_b = parse_height_cm(m_blue.iloc[0]['HEIGHT']) if not m_blue.empty else 178.0
-    r_b = parse_reach_cm(m_blue.iloc[0]['REACH'], h_b) if not m_blue.empty else h_b
-    a_b = parse_age(m_blue.iloc[0]['DOB']) if not m_blue.empty else 30.0
+    h_b = parse_height_cm(row_b['HEIGHT']) if row_b is not None else 178.0
+    r_b = parse_reach_cm(row_b['REACH'], h_b) if row_b is not None else h_b
+    a_b = parse_age(row_b['DOB']) if row_b is not None else 30.0
 
     default_s = {
         'sig_str': 2.0,
@@ -753,8 +803,8 @@ def predecir_combate_dinamico(f_red: str, f_blue: str, weight_class: str = 'Bant
         'avg_td_pct': 0.3,
         'avg_sig_str_pct': 0.4
     }
-    s_r = fighter_career_stats.get(k_r, default_s)
-    s_b = fighter_career_stats.get(k_b, default_s)
+    s_r = buscar_career_stats_obj(f_red, default_s)
+    s_b = buscar_career_stats_obj(f_blue, default_s)
 
     # Variables cuantitativas avanzadas (estilos, precisión y maldición de edad 35+)
     light_classes = [
@@ -919,36 +969,68 @@ def analizar_peleas_the_odds(peleas: List[MatchupOddsItem]):
     for p in peleas:
         prob_home, prob_away, diffs, props = predecir_combate_dinamico(p.home_team, p.away_team, p.weight_class)
 
-        # Probabilidades implícitas justas de mercado (sin vig)
-        raw_imp_h = (1.0 / p.odds_home) if p.odds_home > 1.0 else 0.5
-        raw_imp_a = (1.0 / p.odds_away) if p.odds_away > 1.0 else 0.5
-        sum_imp = raw_imp_h + raw_imp_a
-        fair_market_h = (raw_imp_h / sum_imp) * 100.0
-        fair_market_a = (raw_imp_a / sum_imp) * 100.0
-
-        # Identificar si alguno es debutante sin peleas registradas en UFC
-        k_home = norm_name(p.home_team)
-        k_away = norm_name(p.away_team)
-        debutant_h = k_home not in fighter_career_stats
-        debutant_a = k_away not in fighter_career_stats
-
-        # Calibración Bayesiana cuantitativa: anclar predicción a la eficiencia del mercado
-        if debutant_h or debutant_a:
-            # En combates con debutantes (datos limitados en UFC), anclar 70% a línea de mercado y 30% a modelo físico
-            prob_home = round(0.30 * prob_home + 0.70 * fair_market_h, 1)
-            prob_away = round(100.0 - prob_home, 1)
-        else:
-            # Si ambos tienen récord, atenuar discrepancias extremas (>18%) para evitar falsos edges por variables ocultas
-            div_h = prob_home - fair_market_h
-            if abs(div_h) > 18.0:
-                prob_home = round(fair_market_h + (div_h * 0.50), 1)
-                prob_away = round(100.0 - prob_home, 1)
-
+        # Probabilidades implícitas del mercado (cuotas bookmaker)
         implied_home = round((1.0 / p.odds_home) * 100.0, 1) if p.odds_home > 1.0 else 50.0
         implied_away = round((1.0 / p.odds_away) * 100.0, 1) if p.odds_away > 1.0 else 50.0
 
+        # EL MODELO CUANTITATIVO SE BASA EN MÉTRICAS FÍSICAS, BIOMÉTRICAS Y ESTILÍSTICAS PURAS
+        # No se ancla al 70% de la cuota comercial para no seguir ciegamente a "los machos" sobrevalorados
         edge_home = round(prob_home - implied_home, 1)
         edge_away = round(prob_away - implied_away, 1)
+
+        # DETECCIÓN DE "MACHO TRAMPA" (Favorito inflado por las casas en riesgo real de sorpresa)
+        is_macho_trap = False
+        macho_name = ""
+        trap_reason = ""
+
+        # Caso 1: Local es el macho de mercado (cuota <= 1.55) pero el modelo físico ve peligro
+        if p.odds_home <= 1.55:
+            if prob_home < 56.0:
+                is_macho_trap = True
+                macho_name = p.home_team
+                trap_reason = f"{p.home_team} está inflado por el mercado (cuota {p.odds_home:.2f}). El modelo cuantitativo reduce su probabilidad real a {prob_home:.0f}% por estilo del rival."
+            elif diffs.get('reach_dif', 0) > 6.0:
+                is_macho_trap = True
+                macho_name = p.home_team
+                trap_reason = f"{p.home_team} (cuota {p.odds_home:.2f}) sufre desventaja de alcance significativa (-{diffs['reach_dif']:.1f} cm frente a {p.away_team})."
+            elif diffs.get('age_dif', 0) > 4.0:
+                is_macho_trap = True
+                macho_name = p.home_team
+                trap_reason = f"{p.home_team} (cuota {p.odds_home:.2f}) tiene desventaja de edad ({p.away_team} es más joven y explosivo)."
+        # Caso 2: Visitante es el macho de mercado (cuota <= 1.55)
+        elif p.odds_away <= 1.55:
+            if prob_away < 56.0:
+                is_macho_trap = True
+                macho_name = p.away_team
+                trap_reason = f"{p.away_team} está inflado por el mercado (cuota {p.odds_away:.2f}). El modelo cuantitativo reduce su probabilidad real a {prob_away:.0f}% por estilo del rival."
+            elif diffs.get('reach_dif', 0) < -6.0:
+                is_macho_trap = True
+                macho_name = p.away_team
+                trap_reason = f"{p.away_team} (cuota {p.odds_away:.2f}) sufre desventaja de alcance significativa frente a {p.home_team}."
+            elif diffs.get('age_dif', 0) < -4.0:
+                is_macho_trap = True
+                macho_name = p.away_team
+                trap_reason = f"{p.away_team} (cuota {p.odds_away:.2f}) tiene desventaja de edad frente a {p.home_team}."
+
+        # DETERMINAR LA JUGADA ACCIONABLE INTELIGENTE (Priorizando Props y Líneas de Asaltos)
+        p_over15 = props.get('asaltos', {}).get('over_15', 50.0)
+        p_no_dist = props.get('distancia', {}).get('no_distancia', 50.0)
+        p_va_dist = props.get('distancia', {}).get('va_distancia', 50.0)
+
+        if is_macho_trap:
+            recom_play = f"⚠️ EVITAR GANADOR ({macho_name} en riesgo). JUGAR: {props.get('jugada_alternativa', 'Más de 1.5 Asaltos')}"
+        elif p_over15 >= 72.0:
+            recom_play = f"Más de 1.5 Asaltos ({p_over15:.0f}%)"
+        elif p_no_dist >= 62.0:
+            recom_play = f"Termina antes del límite / KO o Sub ({p_no_dist:.0f}%)"
+        elif p_va_dist >= 62.0:
+            recom_play = f"Combate a Decisión / Tarjetas ({p_va_dist:.0f}%)"
+        elif edge_home >= 4.5 and prob_home >= 58.0:
+            recom_play = f"Victoria Directa ({p.home_team})"
+        elif edge_away >= 4.5 and prob_away >= 58.0:
+            recom_play = f"Victoria Directa ({p.away_team})"
+        else:
+            recom_play = props.get('jugada_alternativa', 'Más de 1.5 Asaltos')
 
         item = {
             'fighter_home': p.home_team,
@@ -965,16 +1047,20 @@ def analizar_peleas_the_odds(peleas: List[MatchupOddsItem]):
             'sig_str_dif': diffs['sig_str_dif'],
             'avg_td_dif': diffs['avg_td_dif'],
             'props': props,
+            'is_macho_trap': is_macho_trap,
+            'trap_reason': trap_reason,
+            'recommended_play': recom_play,
         }
 
-        if edge_home >= 3.0 and edge_home >= edge_away:
+        # Solo marcar como value_pick si NO es un macho trampa y hay ventaja matemática real (+EV)
+        if not is_macho_trap and edge_home >= 3.5 and edge_home >= edge_away:
             item['value_pick'] = p.home_team
             item['value_side'] = 'HOME'
             item['value_odds'] = p.odds_home
             item['value_prob'] = prob_home
             item['value_edge'] = edge_home
             item['has_value'] = True
-        elif edge_away >= 3.0:
+        elif not is_macho_trap and edge_away >= 3.5:
             item['value_pick'] = p.away_team
             item['value_side'] = 'AWAY'
             item['value_odds'] = p.odds_away
