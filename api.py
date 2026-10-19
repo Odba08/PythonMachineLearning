@@ -8,10 +8,36 @@ import joblib
 import pandas as pd
 import math
 import os
+import threading
+import time
+import urllib.request
+
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(BASE_DIR)
 
 app = FastAPI(title="Motor Cuantitativo Multi-Liga")
+
+@app.get("/")
+@app.get("/health")
+def health_check():
+    return {"status": "ok", "service": "Motor Cuantitativo Python ML"}
+
+def _keep_alive_worker():
+    urls = [
+        os.environ.get("BOT_HEALTH_URL", "https://apexanalitycs.onrender.com/health"),
+        os.environ.get("SELF_HEALTH_URL", "https://pythonmachinelearning.onrender.com/health"),
+    ]
+    while True:
+        time.sleep(240)
+        for url in urls:
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "ApexMLKeepAlive/2.0"})
+                with urllib.request.urlopen(req, timeout=20) as _:
+                    pass
+            except Exception:
+                pass
+
+threading.Thread(target=_keep_alive_worker, daemon=True).start()
 
 # 1. Cargamos TODOS los modelos en memoria al arrancar el servidor
 ligas_soportadas = [
