@@ -37,7 +37,7 @@ def _keep_alive_worker():
             except Exception:
                 pass
 
-threading.Thread(target=_keep_alive_worker, daemon=True).start()
+# Keep-alive 24/7 desactivado para ahorrar las 750h/mes de Render
 
 # 1. Cargamos TODOS los modelos en memoria al arrancar el servidor
 ligas_soportadas = [
